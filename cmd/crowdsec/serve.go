@@ -344,6 +344,7 @@ func HandleSignals(cConfig *csconfig.Config) error {
 	return err
 }
 
+// 服务启动
 func Serve(cConfig *csconfig.Config, agentReady chan bool) error {
 	acquisTomb = tomb.Tomb{}
 	parsersTomb = tomb.Tomb{}
@@ -356,6 +357,7 @@ func Serve(cConfig *csconfig.Config, agentReady chan bool) error {
 
 	ctx := context.TODO()
 
+	// 初始化数据库客户端(api 服务不为空)
 	if cConfig.API.Server != nil && cConfig.API.Server.DbConfig != nil {
 		dbClient, err := database.NewClient(ctx, cConfig.API.Server.DbConfig)
 		if err != nil {
@@ -367,6 +369,7 @@ func Serve(cConfig *csconfig.Config, agentReady chan bool) error {
 			return fmt.Errorf("failed to init expr helpers: %w", err)
 		}
 	} else {
+		// 初始化表达式帮助器
 		err := exprhelpers.Init(nil)
 		if err != nil {
 			return fmt.Errorf("failed to init expr helpers: %w", err)
@@ -375,6 +378,7 @@ func Serve(cConfig *csconfig.Config, agentReady chan bool) error {
 		log.Warningln("Exprhelpers loaded without database client.")
 	}
 
+	// api 服务 cti 初始化
 	if cConfig.API.CTI != nil && cConfig.API.CTI.Enabled != nil && *cConfig.API.CTI.Enabled {
 		log.Infof("Crowdsec CTI helper enabled")
 
@@ -383,6 +387,7 @@ func Serve(cConfig *csconfig.Config, agentReady chan bool) error {
 		}
 	}
 
+	// api 服务初始化, 启动
 	if !cConfig.DisableAPI {
 		if cConfig.API.Server.OnlineClient == nil || cConfig.API.Server.OnlineClient.Credentials == nil {
 			log.Warningf("Communication with CrowdSec Central API disabled from configuration file")
@@ -400,20 +405,25 @@ func Serve(cConfig *csconfig.Config, agentReady chan bool) error {
 		}
 
 		if !flags.TestMode {
+			// 启动API服务
 			serveAPIServer(apiServer)
 		}
 	}
 
+	// 启动agent服务
 	if !cConfig.DisableAgent {
+		//初始化Hub
 		hub, err := cwhub.NewHub(cConfig.Hub, log.StandardLogger())
 		if err != nil {
 			return err
 		}
 
+		// 加载Hub
 		if err = hub.Load(); err != nil {
 			return err
 		}
 
+		// 初始化Crowdsec
 		csParsers, datasources, err := initCrowdsec(cConfig, hub, flags.TestMode)
 		if err != nil {
 			return fmt.Errorf("crowdsec init: %w", err)
@@ -436,6 +446,7 @@ func Serve(cConfig *csconfig.Config, agentReady chan bool) error {
 		return nil
 	}
 
+	// 信号监听
 	if cConfig.Common != nil && !flags.haveTimeMachine() {
 		_ = csdaemon.Notify(csdaemon.Ready, log.StandardLogger())
 		// wait for signals

@@ -23,26 +23,45 @@ import (
 	"github.com/crowdsecurity/crowdsec/pkg/types"
 )
 
-// initCrowdsec prepares the log processor service
+// initCrowdsec 初始化Crowdsec
+// 1.初始化告警上下文
+// 2.初始化GeoIP
+// 3.初始化解析器
+// 4.初始化桶
+// 5.初始化应用安全规则
+// 6.初始化API客户端
+/*
+Hub工作流程
+初始化：读取Hub索引文件，了解可用规则
+同步：检查本地安装状态，识别缺失或过期的规则
+加载：将已安装的规则加载到内存中
+验证：确保规则文件完整且语法正确
+分发：为各个组件(解析器、场景等)提供规则访问
+Hub是CrowdSec威胁检测能力的核心，它确保了系统能够获取、管理和使用最新的威胁检测规则，
+使CrowdSec能够有效识别和响应各种安全威胁。
+*/
 func initCrowdsec(cConfig *csconfig.Config, hub *cwhub.Hub, testMode bool) (*parser.Parsers, []acquisition.DataSource, error) {
 	var err error
 
+	// 初始化告警上下文
 	if err = alertcontext.LoadConsoleContext(cConfig, hub); err != nil {
 		return nil, nil, fmt.Errorf("while loading context: %w", err)
 	}
 
+	// 初始化GeoIP
 	err = exprhelpers.GeoIPInit(hub.GetDataDir())
 	if err != nil {
 		// GeoIP databases are not mandatory, do not make crowdsec fail if they are not present
 		log.Warnf("unable to initialize GeoIP: %s", err)
 	}
 
-	// Start loading configs
+	// 初始化解析器
 	csParsers := parser.NewParsers(hub)
 	if csParsers, err = parser.LoadParsers(cConfig, csParsers); err != nil {
 		return nil, nil, fmt.Errorf("while loading parsers: %w", err)
 	}
 
+	// 初始化桶
 	if err = LoadBuckets(cConfig, hub); err != nil {
 		return nil, nil, fmt.Errorf("while loading scenarios: %w", err)
 	}
@@ -70,6 +89,8 @@ func initCrowdsec(cConfig *csconfig.Config, hub *cwhub.Hub, testMode bool) (*par
 	return csParsers, datasources, nil
 }
 
+// 启动解析器
+// 根据配置使用多个goroutine 并行处理日志
 func startParserRoutines(cConfig *csconfig.Config, parsers *parser.Parsers) {
 	// start go-routines for parsing, buckets pour and outputs.
 	parserWg := &sync.WaitGroup{}
@@ -181,29 +202,43 @@ func startLPMetrics(cConfig *csconfig.Config, apiClient *apiclient.ApiClient, hu
 }
 
 // runCrowdsec starts the log processor service
+// 1.启动解析器
+// 2.启动桶管理服务
+// 3.启动API客户端
+// 4.启动心跳服务
+// 5.启动输出服务
+// 6.启动指标收集服务
+// 7.启动数据采集服务
 func runCrowdsec(cConfig *csconfig.Config, parsers *parser.Parsers, hub *cwhub.Hub, datasources []acquisition.DataSource) error {
 	inputEventChan = make(chan types.Event)
 	inputLineChan = make(chan types.Event)
 
+	//启动解析器
 	startParserRoutines(cConfig, parsers)
 
+	//启动桶管理服务
 	startBucketRoutines(cConfig)
 
+	//启动API客户端
 	apiClient, err := apiclient.GetLAPIClient()
 	if err != nil {
 		return err
 	}
 
+	//启动心跳服务
 	startHeartBeat(cConfig, apiClient)
 
+	//启动输出服务
 	startOutputRoutines(cConfig, parsers, apiClient)
 
+	//启动指标收集服务
 	if err := startLPMetrics(cConfig, apiClient, hub, datasources); err != nil {
 		return err
 	}
 
 	log.Info("Starting processing data")
 
+	//启动数据采集服务
 	if err := acquisition.StartAcquisition(context.TODO(), dataSources, inputLineChan, &acquisTomb); err != nil {
 		return fmt.Errorf("starting acquisition error: %w", err)
 	}

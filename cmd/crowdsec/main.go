@@ -85,6 +85,14 @@ func (f *Flags) haveTimeMachine() bool {
 
 type labelsMap map[string]string
 
+// 初始化桶
+/*LoadBuckets函数是CrowdSec威胁检测引擎的核心，它：
+加载威胁检测规则：从Hub中读取场景配置文件
+初始化检测桶：为每种威胁类型创建相应的检测桶
+配置检测逻辑：设置过滤条件、分组规则和响应策略
+建立事件处理管道：连接数据采集、解析和响应系统
+这些桶构成了CrowdSec的威胁检测能力，能够实时分析日志事件，识别异常行为，并触发相应的防护措施。
+*/
 func LoadBuckets(cConfig *csconfig.Config, hub *cwhub.Hub) error {
 	var err error
 
@@ -376,6 +384,7 @@ func main() {
 		defer pprof.StopCPUProfile()
 	}
 
+	//服务启动入口
 	err := StartRunSvc()
 	if err != nil {
 		pprof.StopCPUProfile()
