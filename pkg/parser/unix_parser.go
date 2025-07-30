@@ -99,6 +99,9 @@ func NewParsers(hub *cwhub.Hub) *Parsers {
 	return parsers
 }
 
+// 加载解析器，解析器是grok的解析器，用于解析日志（功能分离）
+// 两个grok解析器：专注于日志解析和结构化，后溢出解析器：专注于事件后处理
+// 性能考虑：两个阶段可能使用不同的 Grok 模式，独立的上下文避免模式冲突，可以独立优化每个阶段的性能
 func LoadParsers(cConfig *csconfig.Config, parsers *Parsers) (*Parsers, error) {
 	var err error
 
@@ -117,7 +120,8 @@ func LoadParsers(cConfig *csconfig.Config, parsers *Parsers) (*Parsers, error) {
 	}
 
 	/*
-		Load enrichers
+		Load enrich plugins
+		插件：用于增强解析器的能力，例如：IP地址、域名、端口等
 	*/
 	log.Info("Loading enrich plugins")
 
@@ -128,6 +132,7 @@ func LoadParsers(cConfig *csconfig.Config, parsers *Parsers) (*Parsers, error) {
 
 	/*
 	 Load the actual parsers
+	 解析器：用于解析日志，例如：IP地址、域名、端口等
 	*/
 
 	log.Infof("Loading parsers from %d files", len(parsers.StageFiles))

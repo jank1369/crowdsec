@@ -63,18 +63,22 @@ func (h *Hub) Load() error {
 }
 
 // parseIndex takes the content of an index file and fills the map of associated parsers/scenarios/collections.
+// 用于将磁盘上的索引文件转换为程序可以使用的内存数据结构，为后续的 item 管理、安装、更新等操作提供基础。
 func (h *Hub) parseIndex() error {
+	// 读取索引文件
 	bidx, err := os.ReadFile(h.local.HubIndexFile)
 	if err != nil {
 		return fmt.Errorf("unable to read index file: %w", err)
 	}
 
+	// 解析索引文件
 	if err := json.Unmarshal(bidx, &h.items); err != nil {
 		return fmt.Errorf("failed to parse index: %w", err)
 	}
 
 	// Iterate over the different types to complete the struct
 	for _, itemType := range ItemTypes {
+		// 遍历不同类型的 item（NOTE：map类型在json反序列化时会默认初始化
 		for name, item := range h.GetItemMap(itemType) {
 			if item == nil {
 				// likely defined as empty object or null in the index file
@@ -89,14 +93,18 @@ func (h *Hub) parseIndex() error {
 				return fmt.Errorf("%s:%s has no stage", itemType, name)
 			}
 
+			// hub双向引用，不优雅，
+			// Hub 管理所有的 Item，Item 需要访问 Hub 的配置和方法
 			item.hub = h
 			item.Name = name
 
 			item.Type = itemType
 			item.FileName = path.Base(item.RemotePath)
 
+			// 检查是否存在缺失的子项，并记录到日志中
 			item.logMissingSubItems()
 
+			// 检查version是否存在
 			if item.latestHash() == "" {
 				h.logger.Errorf("invalid hub item %s: latest version missing from index", item.FQName())
 			}
@@ -171,6 +179,7 @@ func (h *Hub) addItem(item *Item) {
 
 // GetItemMap returns the map of items for a given type.
 func (h *Hub) GetItemMap(itemType string) map[string]*Item {
+	//如果items为nil，将返回nil，NOTE：nil map 可读，但不可写
 	return h.items[itemType]
 }
 

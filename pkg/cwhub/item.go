@@ -238,6 +238,7 @@ func (i *Item) CurrentDependencies() Dependencies {
 	return d
 }
 
+// 用于在解析索引文件时，检查是否存在缺失的子项，并记录到日志中
 func (i *Item) logMissingSubItems() {
 	for _, sub := range i.CurrentDependencies().byType() {
 		for _, subName := range sub.itemNames {
