@@ -81,6 +81,7 @@ func initCrowdsec(cConfig *csconfig.Config, hub *cwhub.Hub, testMode bool) (*par
 		}
 	}
 
+	// 加载数据源
 	datasources, err := LoadAcquisition(cConfig)
 	if err != nil {
 		return nil, nil, fmt.Errorf("while loading acquisition config: %w", err)
@@ -91,6 +92,7 @@ func initCrowdsec(cConfig *csconfig.Config, hub *cwhub.Hub, testMode bool) (*par
 
 // 启动解析器
 // 根据配置使用多个goroutine 并行处理日志
+// parser 使用inputLineChan 接收日志，使用inputEventChan 输出日志
 func startParserRoutines(cConfig *csconfig.Config, parsers *parser.Parsers) {
 	// start go-routines for parsing, buckets pour and outputs.
 	parserWg := &sync.WaitGroup{}
@@ -118,6 +120,8 @@ func startParserRoutines(cConfig *csconfig.Config, parsers *parser.Parsers) {
 	parserWg.Wait()
 }
 
+// 启动桶管理服务
+// 使用inputEventChan 接收日志，使用holders 处理日志，使用buckets 管理日志
 func startBucketRoutines(cConfig *csconfig.Config) {
 	bucketWg := &sync.WaitGroup{}
 
@@ -127,6 +131,7 @@ func startBucketRoutines(cConfig *csconfig.Config) {
 		if cConfig.Crowdsec.BucketStateFile != "" {
 			log.Warningf("Restoring buckets state from %s", cConfig.Crowdsec.BucketStateFile)
 
+			// 加载桶状态
 			if err := leaky.LoadBucketsState(cConfig.Crowdsec.BucketStateFile, buckets, holders); err != nil {
 				return fmt.Errorf("unable to restore buckets: %w", err)
 			}
@@ -136,6 +141,7 @@ func startBucketRoutines(cConfig *csconfig.Config) {
 			bucketsTomb.Go(func() error {
 				defer trace.CatchPanic("crowdsec/runPour")
 
+				// 处理日志
 				return runPour(inputEventChan, holders, buckets, cConfig)
 			})
 		}

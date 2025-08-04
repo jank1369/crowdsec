@@ -19,12 +19,13 @@ import (
 	"github.com/crowdsecurity/go-cs-lib/csstring"
 	"github.com/crowdsecurity/go-cs-lib/trace"
 
+	"maps"
+
 	"github.com/crowdsecurity/crowdsec/pkg/acquisition/configuration"
 	"github.com/crowdsecurity/crowdsec/pkg/csconfig"
 	"github.com/crowdsecurity/crowdsec/pkg/cwversion/component"
 	"github.com/crowdsecurity/crowdsec/pkg/exprhelpers"
 	"github.com/crowdsecurity/crowdsec/pkg/types"
-	"maps"
 )
 
 type DataSourceUnavailableError struct {
@@ -42,17 +43,17 @@ func (e *DataSourceUnavailableError) Unwrap() error {
 
 // The interface each datasource must implement
 type DataSource interface {
-	GetMetrics() []prometheus.Collector                                       // Returns pointers to metrics that are managed by the module
-	GetAggregMetrics() []prometheus.Collector                                 // Returns pointers to metrics that are managed by the module (aggregated mode, limits cardinality)
-	UnmarshalConfig(yamlConfig []byte) error                                             // Decode and pre-validate the YAML datasource - anything that can be checked before runtime
-	Configure(yamlConfig []byte, logger *log.Entry, metricsLevel int) error                                  // Complete the YAML datasource configuration and perform runtime checks.
-	ConfigureByDSN(dsn string, labels map[string]string, logger *log.Entry, uniqueID string) error       // Configure the datasource
-	GetMode() string                                                          // Get the mode (TAIL, CAT or SERVER)
-	GetName() string                                                          // Get the name of the module
-	OneShotAcquisition(ctx context.Context, out chan types.Event, acquisTomb *tomb.Tomb) error   // Start one shot acquisition(eg, cat a file)
-	StreamingAcquisition(ctx context.Context, out chan types.Event, acquisTomb *tomb.Tomb) error // Start live acquisition (eg, tail a file)
-	CanRun() error                                                            // Whether the datasource can run or not (eg, journalctl on BSD is a non-sense)
-	GetUuid() string                                                          // Get the unique identifier of the datasource
+	GetMetrics() []prometheus.Collector                                                            // Returns pointers to metrics that are managed by the module
+	GetAggregMetrics() []prometheus.Collector                                                      // Returns pointers to metrics that are managed by the module (aggregated mode, limits cardinality)
+	UnmarshalConfig(yamlConfig []byte) error                                                       // Decode and pre-validate the YAML datasource - anything that can be checked before runtime
+	Configure(yamlConfig []byte, logger *log.Entry, metricsLevel int) error                        // Complete the YAML datasource configuration and perform runtime checks.
+	ConfigureByDSN(dsn string, labels map[string]string, logger *log.Entry, uniqueID string) error // Configure the datasource
+	GetMode() string                                                                               // Get the mode (TAIL, CAT or SERVER)
+	GetName() string                                                                               // Get the name of the module
+	OneShotAcquisition(ctx context.Context, out chan types.Event, acquisTomb *tomb.Tomb) error     // Start one shot acquisition(eg, cat a file)
+	StreamingAcquisition(ctx context.Context, out chan types.Event, acquisTomb *tomb.Tomb) error   // Start live acquisition (eg, tail a file)
+	CanRun() error                                                                                 // Whether the datasource can run or not (eg, journalctl on BSD is a non-sense)
+	GetUuid() string                                                                               // Get the unique identifier of the datasource
 	Dump() interface{}
 }
 
@@ -217,6 +218,8 @@ func GetMetricsLevelFromPromCfg(prom *csconfig.PrometheusCfg) int {
 }
 
 // LoadAcquisitionFromFile unmarshals the configuration item and checks its availability
+// 加载数据源
+
 func LoadAcquisitionFromFile(config *csconfig.CrowdsecServiceCfg, prom *csconfig.PrometheusCfg) ([]DataSource, error) {
 	var sources []DataSource
 
@@ -360,6 +363,14 @@ func copyEvent(evt types.Event, line string) types.Event {
 	return evtCopy
 }
 
+/*
+数据源产生原始事件 → transformChan
+transform 函数接收事件并执行转换表达式
+根据表达式返回类型处理结果
+将转换后的事件发送到 output 通道
+下游组件（如解析器）继续处理转换后的事件
+这个设计使得 CrowdSec 能够灵活地处理各种格式的日志数据，通过表达式语言实现复杂的数据转换逻辑。
+*/
 func transform(transformChan chan types.Event, output chan types.Event, acquisTomb *tomb.Tomb, transformRuntime *vm.Program, logger *log.Entry) {
 	defer trace.CatchPanic("crowdsec/acquis")
 	logger.Infof("transformer started")
@@ -383,6 +394,7 @@ func transform(transformChan chan types.Event, output chan types.Event, acquisTo
 				output <- evt
 			}
 
+			//根据表达式返回类型处理结果，并发送给解析器
 			switch v := out.(type) {
 			case string:
 				logger.Tracef("transform expression returned %s", v)
@@ -415,16 +427,21 @@ func transform(transformChan chan types.Event, output chan types.Event, acquisTo
 	}
 }
 
+// StartAcquisition
+//
+
 func StartAcquisition(ctx context.Context, sources []DataSource, output chan types.Event, acquisTomb *tomb.Tomb) error {
 	// Don't wait if we have no sources, as it will hang forever
 	if len(sources) == 0 {
 		return nil
 	}
 
+	// 遍历数据源，每个数据源启动一个goroutine
 	for i := range sources {
 		subsrc := sources[i] // ensure its a copy
 		log.Debugf("starting one source %d/%d ->> %T", i, len(sources), subsrc)
 
+		//tomb.Go 启动一个goroutine，并返回一个error，如果error不为nil，则tomb.Kill(error)
 		acquisTomb.Go(func() error {
 			defer trace.CatchPanic("crowdsec/acquis")
 
@@ -434,6 +451,7 @@ func StartAcquisition(ctx context.Context, sources []DataSource, output chan typ
 
 			log.Debugf("datasource %s UUID: %s", subsrc.GetName(), subsrc.GetUuid())
 
+			// 如果transformRuntime不为空，则启动transform
 			if transformRuntime, ok := transformRuntimes[subsrc.GetUuid()]; ok {
 				log.Infof("transform expression found for datasource %s", subsrc.GetName())
 
@@ -444,12 +462,14 @@ func StartAcquisition(ctx context.Context, sources []DataSource, output chan typ
 					"datasource": subsrc.GetName(),
 				})
 
+				// 异步启动transform
 				acquisTomb.Go(func() error {
 					transform(outChan, output, acquisTomb, transformRuntime, transformLogger)
 					return nil
 				})
 			}
 
+			// 根据数据源模式启动采集
 			if subsrc.GetMode() == configuration.TAIL_MODE {
 				err = subsrc.StreamingAcquisition(ctx, outChan, acquisTomb)
 			} else {

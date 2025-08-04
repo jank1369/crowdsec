@@ -498,6 +498,16 @@ func LoadBucket(bucketFactory *BucketFactory, tomb *tomb.Tomb) error {
 	return nil
 }
 
+/*
+读取状态文件并解析 JSON 数据
+遍历所有保存的桶状态
+为每个桶找到对应的工厂配置
+根据模式创建新的桶实例
+恢复所有状态数据（队列、限流器、时间戳等）
+将桶存储到全局映射并启动处理协程
+输出恢复统计信息
+*/
+
 func LoadBucketsState(file string, buckets *Buckets, bucketFactories []BucketFactory) error {
 	var state map[string]Leaky
 

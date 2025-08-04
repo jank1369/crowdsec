@@ -280,6 +280,14 @@ func (n *Node) processGrok(p *types.Event, cachedExprEnv map[string]any) (bool, 
 	return true, NodeHasOKGrok, nil
 }
 
+// 节点处理方法
+// 1. 处理过滤器
+// 2. 处理白名单
+// 3. 处理grok（grok是正则表达式，用于匹配日志中的特定模式）
+// 4. 处理stash
+// 5. 处理子节点
+// 6. 处理statics
+// 7. 处理下一个阶段
 func (n *Node) process(p *types.Event, ctx UnixParserCtx, expressionEnv map[string]interface{}) (bool, error) {
 	clog := n.Logger
 
@@ -311,6 +319,8 @@ func (n *Node) process(p *types.Event, ctx UnixParserCtx, expressionEnv map[stri
 	}
 
 	// Process the stash (data collection) if : a grok was present and succeeded, or if there is no grok
+	// 如果grok成功，或者没有grok，则处理stash
+	// 遍历所有stash（stash是数据收集，用于将日志中的特定数据存储到缓存中，Stash是数据收集的配置）
 	if NodeHasOKGrok || n.Grok.RunTimeRegexp == nil {
 		for idx, stash := range n.Stash {
 			var (

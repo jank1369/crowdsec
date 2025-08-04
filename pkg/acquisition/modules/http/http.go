@@ -244,18 +244,24 @@ func (hc *HttpConfiguration) NewTLSConfig() (*tls.Config, error) {
 	return &tlsConfig, nil
 }
 
+// 验证请求
+// 两种认证方式：Basic认证和Headers认证
 func authorizeRequest(r *http.Request, hc *HttpConfiguration) error {
+	//BA认证
 	if hc.AuthType == "basic_auth" {
+		// 获取Basic认证信息
 		username, password, ok := r.BasicAuth()
 		if !ok {
 			return errors.New("missing basic auth")
 		}
 
+		// 验证Basic认证信息，如果认证信息不匹配，则返回401
 		if username != hc.BasicAuth.Username || password != hc.BasicAuth.Password {
 			return errors.New("invalid basic auth")
 		}
 	}
 
+	// 验证Headers认证信息，如果认证信息不匹配，则返回401
 	if hc.AuthType == "headers" {
 		for key, value := range *hc.Headers {
 			if r.Header.Get(key) != value {
@@ -267,6 +273,12 @@ func authorizeRequest(r *http.Request, hc *HttpConfiguration) error {
 	return nil
 }
 
+// 处理请求
+// 1. 验证请求体大小是否超过最大限制
+// 2. 获取请求源地址
+// 3. 关闭请求体
+// 4. 创建请求体读取器
+// 5. 如果请求体是gzip压缩的，则解压缩请求体
 func (h *HTTPSource) processRequest(w http.ResponseWriter, r *http.Request, hc *HttpConfiguration, out chan types.Event) error {
 	if hc.MaxBodySize != nil && r.ContentLength > *hc.MaxBodySize {
 		w.WriteHeader(http.StatusRequestEntityTooLarge)
@@ -282,6 +294,7 @@ func (h *HTTPSource) processRequest(w http.ResponseWriter, r *http.Request, hc *
 
 	reader := r.Body
 
+	// 如果请求体是gzip压缩的，则解压缩请求体
 	if r.Header.Get("Content-Encoding") == "gzip" {
 		reader, err = gzip.NewReader(r.Body)
 		if err != nil {
@@ -291,11 +304,14 @@ func (h *HTTPSource) processRequest(w http.ResponseWriter, r *http.Request, hc *
 		defer reader.Close()
 	}
 
+	// 创建JSON解码器
 	decoder := json.NewDecoder(reader)
 
+	// 循环读取请求体
 	for {
 		var message json.RawMessage
 
+		// 解码请求体，如果解码失败，则返回400
 		if err := decoder.Decode(&message); err != nil {
 			if err == io.EOF {
 				break
@@ -306,22 +322,26 @@ func (h *HTTPSource) processRequest(w http.ResponseWriter, r *http.Request, hc *
 			return fmt.Errorf("failed to decode: %w", err)
 		}
 
+		// 创建事件，Line是事件的原始数据
 		line := types.Line{
-			Raw:     string(message),
-			Src:     srcHost,
-			Time:    time.Now().UTC(),
-			Labels:  hc.Labels,
-			Process: true,
-			Module:  h.GetName(),
+			Raw:     string(message),  // 原始的请求数据
+			Src:     srcHost,          // 请求源地址
+			Time:    time.Now().UTC(), // 时间
+			Labels:  hc.Labels,        // 标签
+			Process: true,             // 是否处理
+			Module:  h.GetName(),      // 模块名
 		}
 
+		// 如果指标级别是聚合级别，则设置请求源地址为路径（因为ip不同，但是路径相同）
 		if h.metricsLevel == configuration.METRICS_AGGREGATE {
 			line.Src = hc.Path
 		}
 
+		// 创建事件
 		evt := types.MakeEvent(h.Config.UseTimeMachine, types.LOG, true)
 		evt.Line = line
 
+		// 如果指标级别是聚合级别，则设置src为空
 		if h.metricsLevel == configuration.METRICS_AGGREGATE {
 			linesRead.With(prometheus.Labels{"path": hc.Path, "src": ""}).Inc()
 		} else if h.metricsLevel == configuration.METRICS_FULL {
@@ -329,15 +349,17 @@ func (h *HTTPSource) processRequest(w http.ResponseWriter, r *http.Request, hc *
 		}
 
 		h.logger.Tracef("line to send: %+v", line)
-		out <- evt
+		out <- evt // 直接发送事件
 	}
 
 	return nil
 }
 
+// RunServer 启动http server
 func (h *HTTPSource) RunServer(out chan types.Event, t *tomb.Tomb) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc(h.Config.Path, func(w http.ResponseWriter, r *http.Request) {
+		// 如果方法不是POST，则返回405
 		if r.Method != http.MethodPost {
 			h.logger.Errorf("method not allowed: %s", r.Method)
 			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
@@ -345,6 +367,7 @@ func (h *HTTPSource) RunServer(out chan types.Event, t *tomb.Tomb) error {
 			return
 		}
 
+		// 如果认证失败，则返回401
 		if err := authorizeRequest(r, &h.Config); err != nil {
 			h.logger.Errorf("failed to authorize request from '%s': %s", r.RemoteAddr, err)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -352,11 +375,14 @@ func (h *HTTPSource) RunServer(out chan types.Event, t *tomb.Tomb) error {
 			return
 		}
 
+		// 如果请求来自unix socket，则设置为loopback
+		//Unix Socket的特殊性：当HTTP请求通过Unix socket连接时，r.RemoteAddr的值是"@"，这不是一个有效的IP地址格式。
 		if r.RemoteAddr == "@" {
 			//We check if request came from unix socket and if so we set to loopback
 			r.RemoteAddr = "127.0.0.1:65535"
 		}
 
+		// 处理请求，组装好事件，直接发送
 		err := h.processRequest(w, r, &h.Config, out)
 		if err != nil {
 			h.logger.Errorf("failed to process request from '%s': %s", r.RemoteAddr, err)
@@ -375,6 +401,12 @@ func (h *HTTPSource) RunServer(out chan types.Event, t *tomb.Tomb) error {
 			w.WriteHeader(http.StatusOK)
 		}
 
+		// 返回OK，为何不等检测结果出来再返回？
+		/**
+				HTTP请求 → 验证格式 → 发送到事件通道 → 立即返回OK
+		                    ↓
+		                后台异步检测 → 更新威胁情报
+		*/
 		w.Write([]byte("OK"))
 	})
 
@@ -468,6 +500,7 @@ func (h *HTTPSource) RunServer(out chan types.Event, t *tomb.Tomb) error {
 	}
 }
 
+// StreamingAcquisition 启动http server
 func (h *HTTPSource) StreamingAcquisition(ctx context.Context, out chan types.Event, t *tomb.Tomb) error {
 	h.logger.Debugf("start http server on %s", h.Config.ListenAddr)
 

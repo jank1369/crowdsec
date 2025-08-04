@@ -266,6 +266,8 @@ var (
 	StageParseMutex sync.Mutex
 )
 
+// 解析日志
+
 func Parse(ctx UnixParserCtx, xp types.Event, nodes []Node) (types.Event, error) {
 	event := xp
 
@@ -304,7 +306,7 @@ func Parse(ctx UnixParserCtx, xp types.Event, nodes []Node) (types.Event, error)
 			StageParseMutex.Unlock()
 		}
 	}
-
+	// 遍历所有阶段
 	for _, stage := range ctx.Stages {
 		if ParseDump {
 			StageParseMutex.Lock()
@@ -315,6 +317,7 @@ func Parse(ctx UnixParserCtx, xp types.Event, nodes []Node) (types.Event, error)
 		}
 		/* if the node is forward in stages, seek to this stage */
 		/* this is for example used by testing system to inject logs in post-syslog-parsing phase*/
+		// 如果当前阶段大于目标阶段，则跳过
 		if stageidx(event.Stage, ctx.Stages) > stageidx(stage, ctx.Stages) {
 			log.Tracef("skipping stage, we are already at [%s] expecting [%s]", event.Stage, stage)
 			continue
@@ -342,6 +345,7 @@ func Parse(ctx UnixParserCtx, xp types.Event, nodes []Node) (types.Event, error)
 			if ctx.Profiling {
 				nodes[idx].Profiling = true
 			}
+			// 根据对应的处理节点，处理日志（包括过滤器、白名单、grok、stash、子节点、statics、下一个阶段）
 			ret, err := nodes[idx].process(&event, ctx, map[string]any{"evt": &event})
 			if err != nil {
 				clog.Errorf("Error while processing node : %v", err)
@@ -355,11 +359,14 @@ func Parse(ctx UnixParserCtx, xp types.Event, nodes []Node) (types.Event, error)
 					StageParseCache[stage][nodes[idx].Name] = make([]dumps.ParserResult, 0)
 					parserIdxInStage = len(StageParseCache[stage])
 				} else {
+
 					parserIdxInStage = StageParseCache[stage][nodes[idx].Name][0].Idx
 				}
 				StageParseMutex.Unlock()
 
+				//deepcopy 性能太差，可以使用msgpack
 				evtcopy := deepcopy.Copy(event)
+				// 将解析结果存储到缓存中
 				parserInfo := dumps.ParserResult{Evt: evtcopy.(types.Event), Success: ret, Idx: parserIdxInStage}
 				StageParseMutex.Lock()
 				StageParseCache[stage][nodes[idx].Name] = append(StageParseCache[stage][nodes[idx].Name], parserInfo)

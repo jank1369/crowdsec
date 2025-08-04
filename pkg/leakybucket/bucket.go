@@ -203,6 +203,7 @@ func FromFactory(bucketFactory BucketFactory) *Leaky {
 
 /* for now mimic a leak routine */
 //LeakRoutine us the life of a bucket. It dies when the bucket underflows or overflows
+// CrowdSec 威胁检测系统的核心组件，负责实现基于漏桶算法的异常检测机制，通过监控事件流来识别潜在的威胁行为。
 func LeakRoutine(leaky *Leaky) error {
 	var (
 		durationTickerChan = make(<-chan time.Time)
@@ -212,6 +213,7 @@ func LeakRoutine(leaky *Leaky) error {
 
 	defer trace.CatchPanic(fmt.Sprintf("crowdsec/LeakRoutine/%s", leaky.Name))
 
+	// 指标统计
 	BucketsCurrentCount.With(prometheus.Labels{"name": leaky.Name}).Inc()
 	defer BucketsCurrentCount.With(prometheus.Labels{"name": leaky.Name}).Dec()
 
@@ -224,11 +226,14 @@ func LeakRoutine(leaky *Leaky) error {
 	//and preventing them from being destroyed
 	processors := deepcopy.Copy(leaky.BucketConfig.processors).([]Processor)
 
+	// 发送信号，通知桶已启动
 	leaky.Signal <- true
 	atomic.AddInt64(&LeakyRoutineCount, 1)
 	defer atomic.AddInt64(&LeakyRoutineCount, -1)
 
+	// 初始化桶
 	for _, f := range processors {
+		// 初始化桶（OnBucketInit 是桶初始化时的回调函数）
 		err := f.OnBucketInit(leaky.BucketConfig)
 		if err != nil {
 			leaky.logger.Errorf("Problem at bucket initializiation. Bail out %T : %v", f, err)
@@ -241,9 +246,11 @@ func LeakRoutine(leaky *Leaky) error {
 	for {
 		select {
 		/*receiving an event*/
+		// 通过leaky.In 接收事件
 		case msg := <-leaky.In:
 			/*the msg var use is confusing and is redeclared in a different type :/*/
 			for _, processor := range processors {
+				// 预处理：应用 OnBucketPour 处理器钩子
 				msg = processor.OnBucketPour(leaky.BucketConfig)(*msg, leaky)
 				// if &msg == nil we stop processing
 				if msg == nil {
@@ -258,9 +265,12 @@ func LeakRoutine(leaky *Leaky) error {
 			}
 			BucketsPour.With(prometheus.Labels{"name": leaky.Name, "source": msg.Line.Src, "type": msg.Line.Module}).Inc()
 
+			// 事件倒入：调用 Pour 函数将事件添加到桶中
 			leaky.Pour(leaky, *msg) // glue for now
 
+			// 后处理：应用 AfterBucketPour 处理器钩子
 			for _, processor := range processors {
+				// 后处理：应用 AfterBucketPour 处理器钩子
 				msg = processor.AfterBucketPour(leaky.BucketConfig)(*msg, leaky)
 				if msg == nil {
 					if leaky.orderEvent {
@@ -281,6 +291,7 @@ func LeakRoutine(leaky *Leaky) error {
 					durationTickerChan = durationTicker.C
 					defer durationTicker.Stop()
 				} else {
+					// 重置定时器
 					durationTicker.Reset(leaky.Duration)
 				}
 			}

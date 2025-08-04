@@ -542,6 +542,7 @@ func (w *AppsecSource) checkAuth(ctx context.Context, apiKey string) error {
 }
 
 // should this be in the runner ?
+// 处理请求，验证请求，解析请求，生成响应
 func (w *AppsecSource) appsecHandler(rw http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	w.logger.Debugf("Received request from '%s' on %s", r.RemoteAddr, r.URL.Path)
@@ -557,6 +558,7 @@ func (w *AppsecSource) appsecHandler(rw http.ResponseWriter, r *http.Request) {
 	}
 
 	// parse the request only once
+
 	parsedRequest, err := appsec.NewParsedRequestFromRequest(r, w.logger)
 	if err != nil {
 		w.logger.Errorf("%s", err)
