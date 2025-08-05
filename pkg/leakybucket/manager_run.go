@@ -28,6 +28,14 @@ The leaky routines lifecycle are based on "real" time.
 But when we are running in time-machine mode, the reference time is in logs and not "real" time.
 Thus we need to garbage collect them to avoid a skyrocketing memory usage.
 */
+
+// 垃圾回收桶
+// 根据deadline 时间，回收桶
+// 如果桶已经溢出，则直接删除
+// 如果桶没有溢出，则根据桶的容量和当前时间，计算桶的剩余容量
+// 如果桶的剩余容量小于0，则认为桶已经溢出，则直接删除
+// 如果桶的剩余容量大于0，则认为桶没有溢出，则继续保留
+// 如果桶的剩余容量等于0，则认为桶已经溢出，则直接删除
 func GarbageCollectBuckets(deadline time.Time, buckets *Buckets) error {
 	buckets.wgPour.Wait()
 	buckets.wgDumpState.Add(1)
@@ -156,6 +164,9 @@ func ShutdownAllBuckets(buckets *Buckets) error {
 	return nil
 }
 
+// 将日志放入桶中
+// 这个函数主要用于 CrowdSec 的安全事件处理流程中，
+// 当检测到可疑行为时，将事件倒入相应的漏桶中进行聚合分析，当桶满时触发安全响应
 func PourItemToBucket(bucket *Leaky, holder BucketFactory, buckets *Buckets, parsed *types.Event) (bool, error) {
 	var sent bool
 	var buckey = bucket.Mapkey
@@ -283,9 +294,19 @@ func LoadOrStoreBucketFromHolder(partitionKey string, buckets *Buckets, holder B
 
 var orderEvent map[string]*sync.WaitGroup
 
+// 将日志放入桶中
+// 事件接收 → 2. 场景匹配 → 3. 过滤器评估 → 4. 分组计算 → 5. 桶管理 → 6. 事件倒入
+/*这个函数是 CrowdSec 事件处理的核心，用于：
+将安全事件分发到不同的检测场景
+实现多维度的事件聚合和分析
+支持复杂的安全规则和策略
+提供灵活的事件分组和过滤机制
+
+*/
 func PourItemToHolders(parsed types.Event, holders []BucketFactory, buckets *Buckets) (bool, error) {
 	var ok, condition, poured bool
 
+	// 跟踪桶的填充情况
 	if BucketPourTrack {
 		if BucketPourCache == nil {
 			BucketPourCache = make(map[string][]types.Event)
@@ -336,6 +357,7 @@ func PourItemToHolders(parsed types.Event, holders []BucketFactory, buckets *Buc
 				return false, errors.New("groupby wrong type")
 			}
 		}
+		// 计算桶的key
 		buckey := GetKey(holders[idx], groupby)
 
 		//we need to either find the existing bucket, or create a new one (if it's the first event to hit it for this partition key)
@@ -358,6 +380,7 @@ func PourItemToHolders(parsed types.Event, holders []BucketFactory, buckets *Buc
 			orderEvent[buckey].Add(1)
 		}
 
+		// 将日志倒入桶中
 		ok, err := PourItemToBucket(bucket, holders[idx], buckets, &parsed)
 
 		if bucket.orderEvent {

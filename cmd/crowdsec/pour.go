@@ -25,6 +25,7 @@ func runPour(input chan types.Event, holders []leaky.BucketFactory, buckets *lea
 			startTime := time.Now()
 
 			count++
+			// 每5000个日志进行一次垃圾回收
 			if count%5000 == 0 {
 				log.Infof("%d existing buckets", leaky.LeakyRoutineCount)
 				// when in forensics mode, garbage collect buckets
@@ -35,7 +36,7 @@ func runPour(input chan types.Event, holders []leaky.BucketFactory, buckets *lea
 							log.Warningf("Failed to parse time from event '%s' : %s", parsed.MarshaledTime, err)
 						} else {
 							log.Warning("Starting buckets garbage collection ...")
-
+							// 垃圾回收桶
 							if err = leaky.GarbageCollectBuckets(*z, buckets); err != nil {
 								return fmt.Errorf("failed to start bucket GC : %w", err)
 							}
@@ -44,6 +45,7 @@ func runPour(input chan types.Event, holders []leaky.BucketFactory, buckets *lea
 				}
 			}
 			// here we can bucketify with parsed
+			// 将日志放入桶中
 			poured, err := leaky.PourItemToHolders(parsed, holders, buckets)
 			if err != nil {
 				log.Errorf("bucketify failed for: %v with %s", parsed, err)
